@@ -389,3 +389,268 @@ sequenceDiagram
 - **Webhook**: A way for one system to automatically "ping" another system the moment something happens (here, a high-risk alert).
 - **PostgreSQL**: A widely used relational database — good for structured, table-based data like invoices, vendors, and financial records.
 - **LiteLLM**: A routing layer that lets the system call different language models through one consistent interface.
+
+
+==================================================================================================================================================================================================
+
+
+# 🛠️ My Contributions — AuditIQ
+
+![AuditIQ](https://img.shields.io/badge/Project-AuditIQ-8A2BE2?style=for-the-badge) ![Status](https://img.shields.io/badge/Interview-Ready-brightgreen?style=for-the-badge)
+
+## 🟣 Part 1 — AuditIQ
+
+### 🎯 The headline answer (what I'd say first)
+
+> *"On AuditIQ, I owned three things end-to-end: the **complete frontend/dashboard**, a chunk of the **database design**, and the **entire SQL sub-agent** — that's the NL-to-SQL copilot auditors chat with. On top of that, I built a few of the deterministic checking tools: the **three-way match checker**, the **duplicate invoice checker**, and the underlying `execute_sql_query` tool that the SQL agent actually calls."*
+
+### 📦 Breakdown by contribution area
+
+<table>
+<tr><td>🖥️ <b>Frontend</b></td><td>Built the full Appsmith-based dashboard — the auditor-facing surface: Data Explorer, Audit Workspace, and the HITL (Human-In-The-Loop) Review Queue.</td></tr>
+<tr><td>🗄️ <b>Database</b></td><td>Co-designed the PostgreSQL schema on Neon — helped structure tables like <code>invoices</code>, <code>vendor_master</code>, and <code>audit_results</code> so the agent pipeline and dashboard could query them cleanly.</td></tr>
+<tr><td>🤖 <b>SQL Sub-Agent</b></td><td>Designed and built the whole NL-to-SQL flow — schema discovery → LLM generates SQL → safe execution → retry-on-error → readable output for the auditor.</td></tr>
+<tr><td>🔧 <b>Custom Tools</b></td><td><code>three_way_match_checker</code>, <code>duplicate_invoice_checker</code>, and <code>execute_sql_query</code>.</td></tr>
+</table>
+
+---
+
+### 🖥️ Frontend — Detailed Talking Points
+
+> *"I built the dashboard in Appsmith rather than a from-scratch React app, since it let us wire up complex data-grid + workflow UIs fast without reinventing tables, filters, and forms. My job was designing the auditor's actual workflow: browse flagged transactions → drill into evidence → approve/reject → see the trail."*
+
+<details>
+<summary><b>❓ Why Appsmith instead of building a custom frontend?</b></summary>
+
+Low-code let us focus engineering time on the harder problem — the agent pipeline and scoring logic — while still getting a fully functional, data-bound dashboard. For an audit tool, the UI needs reliable tables, filters, and forms more than custom visual flair, which is exactly what Appsmith is built for.
+</details>
+
+<details>
+<summary><b>❓ Walk me through the dashboard's main screens.</b></summary>
+
+Three main areas: a **Data Explorer** for browsing raw invoices/vendors, an **Audit Workspace** showing flagged transactions with their risk score and flag details, and a **HITL Review Queue** where high-risk transactions wait for a human decision (approve/reject/request correction).
+</details>
+
+<details>
+<summary><b>❓ How does the dashboard get its data?</b></summary>
+
+It queries PostgreSQL (Neon) directly via SQL-bound Appsmith queries/widgets pulling from <code>audit_results</code>, <code>invoices</code>, and related tables.
+</details>
+
+<details>
+<summary><b>❓ How does an auditor actually make a decision on a flagged transaction?</b></summary>
+
+They open it from the review queue, see the evidence trail (which rule fired, what the source documents said), and choose approve, reject, or request correction — that decision gets written back to the database, closing the loop.
+</details>
+
+<details>
+<summary><b>❓ What was the hardest UI challenge?</b></summary>
+
+Showing the "why" behind a flag clearly — an auditor shouldn't have to trust a black-box score, so the workspace surfaces the specific rule, source data, and policy reference that triggered each flag, not just a number.
+</details>
+
+<details>
+<summary><b>❓ If you rebuilt this frontend in React instead, what would change?</b></summary>
+
+I'd get more control over custom visualizations (e.g., a visual match diagram for three-way matching) and finer-grained state management, at the cost of building every table/filter/form component from scratch instead of getting it for free.
+</details>
+
+<details>
+<summary><b>❓ How did you handle real-time-feeling updates (e.g., pipeline progress)?</b></summary>
+
+The pipeline posts progress events to a webhook endpoint as it runs; the dashboard polls/reflects that status so the auditor isn't staring at a blank screen during processing.
+</details>
+
+---
+
+### 🗄️ Database Design — Detailed Talking Points
+
+> *"I worked on shaping the schema so that both the agent pipeline and the dashboard could hit it efficiently — deciding what belongs in `invoices` vs `purchase_orders` vs `goods_receipts`, and how `vendor_master` links into risk checks."*
+
+<details>
+<summary><b>❓ Why separate tables for invoices, POs, and goods receipts instead of one big table?</b></summary>
+
+Each represents a different real-world document with its own lifecycle and fields; keeping them separate lets the three-way match checker join across them cleanly and keeps each table's schema honest to what it represents.
+</details>
+
+<details>
+<summary><b>❓ How does <code>vendor_master</code> tie into the rest of the schema?</b></summary>
+
+Invoices reference a vendor by ID; vendor risk checks and vendor policy checks join against `vendor_master` to pull vendor profile/history data during the vendor-intelligence phase.
+</details>
+
+<details>
+<summary><b>❓ What would you index, and why?</b></summary>
+
+Invoice number and vendor ID — both are the lookup keys the duplicate checker and vendor checker hit constantly, so indexing them keeps those checks fast even as transaction volume grows.
+</details>
+
+<details>
+<summary><b>❓ Why Postgres and not a NoSQL database here?</b></summary>
+
+Financial documents are inherently relational — invoices reference POs, POs reference vendors — and audits need reliable joins and transactional consistency, which is exactly what a relational database is built for.
+</details>
+
+<details>
+<summary><b>❓ What's stored in <code>audit_results</code>?</b></summary>
+
+The risk rating, the specific flags detected, an explanation, policy citations, and which policy version was applied — enough for full traceability of any decision.
+</details>
+
+<details>
+<summary><b>❓ Did you consider normalization trade-offs?</b></summary>
+
+Yes — keeping flags/results semi-structured (rather than fully normalized into their own tables) made it faster to write and query per-transaction, at the cost of some redundancy, which was an acceptable trade-off given the volumes involved.
+</details>
+
+---
+
+### 🤖 SQL Sub-Agent (NL-to-SQL Copilot) — Detailed Talking Points
+
+> *"This was my main ownership piece. The idea: an auditor should be able to type a plain-English question into the dashboard chat — like 'show me all vendors with more than 3 high-risk invoices this month' — and get back a real answer, without knowing SQL."*
+
+**The flow I designed:**
+
+```mermaid
+flowchart LR
+    Q["Auditor types a question"] --> D["Schema discovery\n(what tables/columns exist)"]
+    D --> G["LLM generates SQL"]
+    G --> E["execute_sql_query\nonly SELECT / WITH allowed"]
+    E -->|"error"| G
+    E -->|"success, capped rows"| O["Formatted answer\n(table / summary)"]
+```
+
+<details>
+<summary><b>❓ Walk me through this flow step by step.</b></summary>
+
+1. Auditor asks a question in plain English in the dashboard chat.
+2. The agent first does schema discovery — it needs to know what tables/columns actually exist before writing SQL.
+3. It sends the question + schema info to an LLM, which drafts a SQL query.
+4. That query goes through <code>execute_sql_query</code>, which I built to only allow read-only statements — <code>SELECT</code>/<code>WITH</code> — nothing that could mutate data.
+5. If the query has a syntax/logic error, it loops back and regenerates rather than failing outright.
+6. On success, results are capped (to a reasonable row limit) and formatted into a readable table or summary for the auditor.
+</details>
+
+<details>
+<summary><b>❓ Why restrict it to SELECT/WITH only?</b></summary>
+
+This agent is meant for querying and reporting, not for changing data. Letting an LLM-generated query anywhere near <code>INSERT</code>/<code>UPDATE</code>/<code>DELETE</code> is a real risk — a single hallucinated or malformed query could corrupt audit records. Restricting to read-only statements removes that entire class of risk.
+</details>
+
+<details>
+<summary><b>❓ How do you defend against SQL injection or a malicious prompt trying to sneak in a write?</b></summary>
+
+Two layers: the LLM is prompted to only produce read-only SQL, and separately, <code>execute_sql_query</code> itself validates/parses the statement type before running it — so even if the LLM slipped, the tool acts as a hard gate.
+</details>
+
+<details>
+<summary><b>❓ Why cap the number of rows returned?</b></summary>
+
+Two reasons: performance (a runaway query shouldn't flood the dashboard or the LLM context), and usability — an auditor doesn't want to scroll through 10,000 rows; they want a summarized, digestible answer.
+</details>
+
+<details>
+<summary><b>❓ What happens if the generated SQL is wrong but still "valid" (runs without error, wrong result)?</b></summary>
+
+That's a real limitation — the tool checks that the query is syntactically valid and read-only, not that it's semantically correct. I'd mitigate this with schema-aware prompting (giving the LLM real column names/types) and, longer term, a validation step comparing result shape against the question's intent.
+</details>
+
+<details>
+<summary><b>❓ How does "schema discovery" actually work?</b></summary>
+
+Before generating SQL, the agent needs the real table/column names — otherwise the LLM guesses and hallucinates fields that don't exist. It queries the database's metadata (or a cached schema description) and includes that in the prompt.
+</details>
+
+<details>
+<summary><b>❓ What's the retry logic exactly?</b></summary>
+
+If <code>execute_sql_query</code> returns a DB error (bad syntax, unknown column), that error message gets fed back to the LLM as context so it can correct itself and regenerate — rather than the whole interaction failing on the first mistake.
+</details>
+
+<details>
+<summary><b>❓ How would you extend this sub-agent further?</b></summary>
+
+Add query result caching for repeated common questions, add a confirmation step for ambiguous questions before running, and add basic query-cost estimation so an expensive aggregate doesn't silently slow the dashboard.
+</details>
+
+<details>
+<summary><b>❓ Is this NL-to-SQL agent the same thing as the main audit pipeline?</b></summary>
+
+No — it's a separate agent purely for auditor-driven ad-hoc questions on top of already-processed data. The main pipeline (extraction → checks → scoring → audit pack) is what actually generates and scores the audit results in the first place.
+</details>
+
+---
+
+### 🔧 Custom Tools — Detailed Talking Points
+
+<details>
+<summary><b>❓ Explain the three-way match checker.</b></summary>
+
+It compares the invoice, the purchase order, and the goods receipt note for the same transaction — checking that quantities and amounts line up across all three documents. A mismatch (e.g., invoiced quantity higher than what was actually received) raises a flag that feeds into the risk score.
+</details>
+
+<details>
+<summary><b>❓ What edge cases did you have to think about in three-way matching?</b></summary>
+
+Partial deliveries (goods received across multiple shipments for one PO), minor rounding differences that shouldn't count as fraud, and currency/unit mismatches — the checker needs tolerance thresholds so it doesn't flood the system with false positives on trivial differences.
+</details>
+
+<details>
+<summary><b>❓ Explain the duplicate invoice checker.</b></summary>
+
+It looks at invoice number + vendor ID against transaction history to catch invoices that have already been submitted/paid — a classic way duplicate payments or fraud slip through in manual audits.
+</details>
+
+<details>
+<summary><b>❓ How do you detect a "duplicate" that isn't an exact match (e.g., slightly different invoice number)?</b></summary>
+
+Exact match on invoice number + vendor is the first-pass check; near-duplicate detection (similar amounts, same vendor, close dates) would be a natural next step using fuzzy matching, though the current implementation is exact-match based.
+</details>
+
+<details>
+<summary><b>❓ How do these tools plug into the bigger agent pipeline?</b></summary>
+
+Each tool runs as one of the parallel checking phases; its output (a list of flags) is passed to the verifier agent, which double-checks the flags before they reach the risk scorer.
+</details>
+
+<details>
+<summary><b>❓ Why build these as separate deterministic tools instead of asking an LLM to "check" the documents directly?</b></summary>
+
+Determinism and auditability — a rule like "quantity mismatch > 5%" gives the same result every time and is easy to explain to an auditor, whereas asking an LLM to freely judge a match is inconsistent and harder to defend in an audit trail.
+</details>
+
+<details>
+<summary><b>❓ What would you do differently if you rebuilt the three-way match checker?</b></summary>
+
+Add configurable tolerance thresholds per company/policy (some clients might allow 2% variance, others 0%) instead of a single hardcoded rule, so it adapts to different audit policies.
+</details>
+
+---
+
+### 🌐 Cross-cutting AuditIQ questions
+
+<details>
+<summary><b>❓ Of everything you built, what are you most proud of and why?</b></summary>
+
+The SQL sub-agent — it's the piece that turns a static dashboard into something an auditor can actually converse with, and getting the safety constraints (read-only, retry-on-error, row caps) right without breaking usability was the real design challenge.
+</details>
+
+<details>
+<summary><b>❓ What was the biggest bug or issue you personally hit?</b></summary>
+
+*(Have a real, specific one ready — e.g., an early version of the SQL agent occasionally generated queries referencing columns that didn't exist because schema info wasn't being passed into the prompt correctly; fixing the schema-discovery step resolved it.)*
+</details>
+
+<details>
+<summary><b>❓ Which part of AuditIQ did you NOT build?</b></summary>
+
+The core scoring engine (`risk_scoring_calculator`), the extraction agent, the mail/QStash alerting agents, and the vendor intelligence tool were built by teammates — I focused on the frontend, DB design input, SQL agent, and the two checker tools plus the query-execution tool.
+</details>
+
+<details>
+<summary><b>❓ How did your piece (SQL agent) depend on your teammates' work, and vice versa?</b></summary>
+
+The SQL agent needed a stable schema (DB design) and populated `audit_results` (from the scoring pipeline teammates built) to have anything meaningful to query — so I coordinated with them on final table/column names before finalizing the schema-discovery step.
+</details>
+
+---
